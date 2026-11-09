@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ChronosGate — Distributed API Gateway & Webhook Console</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans p-6">
+  <div class="max-w-6xl mx-auto space-y-6">
+    <!-- Top Bar -->
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-slate-800 pb-4 gap-4">
+      <div>
+        <div class="flex items-center gap-2">
+          <span class="h-3 w-3 rounded-full bg-emerald-400 animate-pulse"></span>
+          <h1 class="text-2xl font-bold text-indigo-400 tracking-tight">ChronosGate Engine</h1>
+        </div>
+        <p class="text-sm text-slate-400 mt-1">Sliding-Window Rate Limiter & HMAC Webhook Delivery Engine</p>
+      </div>
+      <button id="provisionBtn" onclick="quickSetup()" class="bg-indigo-600 hover:bg-indigo-500 px-4 py-2.5 rounded-lg font-medium text-sm transition shadow-lg shadow-indigo-600/20">
+        ⚡ 1-Click Provision Demo Tenant & API Key
+      </button>
+    </div>
+
+    <!-- Active Credentials & Action Controls -->
+    <div class="grid grid-cols-1 md:grid-cols-12 gap-4 bg-slate-900/90 p-5 rounded-xl border border-slate-800">
+      <div class="md:col-span-5">
+        <label class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Active API Key (x-api-key) — Limit: 10 req/min</label>
+        <input id="activeApiKey" type="text" readonly placeholder="Click '1-Click Provision' to generate key..." class="w-full mt-1.5 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm font-mono text-emerald-400 focus:outline-none" />
+      </div>
+      <div class="md:col-span-7 flex flex-wrap items-end gap-3">
+        <button onclick="triggerSingleEvent()" class="bg-emerald-600 hover:bg-emerald-500 px-4 py-2 rounded-lg text-sm font-medium flex-1 transition">
+          🚀 Dispatch 1 Event (POST /v1/events/trigger)
+        </button>
+        <button onclick="stressTest()" class="bg-rose-600 hover:bg-rose-500 px-4 py-2 rounded-lg text-sm font-medium flex-1 transition">
+          🔥 Burst 15 Requests (Trigger 429 Rate Limit)
+        </button>
+      </div>
+    </div>
+
+    <!-- Metrics Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div class="bg-slate-900 p-5 rounded-xl border border-slate-800">
+        <div class="text-slate-400 text-xs font-semibold uppercase tracking-wider">Total Gateway Requests</div>
+        <div id="metricTotal" class="text-3xl font-bold mt-2 text-white">0</div>
+      </div>
+      <div class="bg-slate-900 p-5 rounded-xl border border-slate-800">
+        <div class="text-slate-400 text-xs font-semibold uppercase tracking-wider">429 Throttled Bursts</div>
+        <div id="metricThrottled" class="text-3xl font-bold mt-2 text-rose-400">0</div>
+      </div>
+      <div class="bg-slate-900 p-5 rounded-xl border border-slate-800">
+        <div class="text-slate-400 text-xs font-semibold uppercase tracking-wider">Avg Gateway Latency</div>
+        <div id="metricLatency" class="text-3xl font-bold mt-2 text-indigo-400">0 ms</div>
+      </div>
+    </div>
+
+    <!-- Live Telemetry Feeds -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div class="bg-slate-900 p-5 rounded-xl border border-slate-800">
+        <div class="flex justify-between items-center mb-3">
+          <h2 class="font-semibold text-slate-200">Gateway Request Telemetry</h2>
+          <span class="text-xs text-slate-400">Sliding Window (60s)</span>
+        </div>
+        <div id="logsContainer" class="space-y-2 text-xs font-mono max-h-80 overflow-y-auto pr-1">
+          <div class="text-slate-500 py-8 text-center">No requests logged yet. Provision a key to begin.</div>
+        </div>
+      </div>
+
+      <div class="bg-slate-900 p-5 rounded-xl border border-slate-800">
+        <div class="flex justify-between items-center mb-3">
+          <h2 class="font-semibold text-slate-200">Webhook Delivery Queue</h2>
+          <span class="text-xs text-slate-400">HMAC-SHA256 + Exponential Backoff</span>
+        </div>
+        <div id="deliveriesContainer" class="space-y-2 text-xs font-mono max-h-80 overflow-y-auto pr-1">
+          <div class="text-slate-500 py-8 text-center">No webhook deliveries yet.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let jwtToken = '';
+
+    async function quickSetup() {
+      const btn = document.getElementById('provisionBtn');
+      btn.innerText = '⏳ Provisioning...';
+      try {
+        const email = `dev_${Math.floor(Math.random() * 99999)}@chronos.io`;
+        const regRes = await fetch('/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password: 'password123' })
+        });
+        const authData = await regRes.json();
+        jwtToken = authData.token;
+
+        const keyRes = await fetch('/api/keys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwtToken}` },
+          body: JSON.stringify({ name: 'Demo Production Key', rateLimit: 10 })
+        });
+        const keyData = await keyRes.json();
+        document.getElementById('activeApiKey').value = keyData.key;
+
+        await fetch('/api/webhooks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwtToken}` },
+          body: JSON.stringify({
+            url: `${window.location.origin}/api/mock-receiver`,
+            eventTypes: ['payment.success']
+          })
+        });
+
+        btn.innerText = '✅ Provisioned & Ready';
+        refreshAnalytics();
+      } catch (e) {
+        btn.innerText = '❌ Database Not Connected (Check .env)';
+      }
+    }
+
+    async function triggerSingleEvent() {
+      const key = document.getElementById('activeApiKey').value;
+      if (!key) return alert('Click 1-Click Provision first!');
+
+      await fetch('/api/v1/events/trigger', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': key },
+        body: JSON.stringify({
+          eventType: 'payment.success',
+          payload: { orderId: `ORD-${Math.floor(Math.random() * 10000)}`, amount: 4999, currency: 'INR' }
+        })
+      });
+      refreshAnalytics();
+    }
+
+    async function stressTest() {
+      const key = document.getElementById('activeApiKey').value;
+      if (!key) return alert('Click 1-Click Provision first!');
+      await Promise.all(Array.from({ length: 15 }).map(() => triggerSingleEvent()));
+      refreshAnalytics();
+    }
+
+    async function refreshAnalytics() {
+      if (!jwtToken) return;
+      const res = await fetch('/api/analytics', {
+        headers: { Authorization: `Bearer ${jwtToken}` }
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+
+      document.getElementById('metricTotal').innerText = data.metrics.totalRequests;
+      document.getElementById('metricThrottled').innerText = data.metrics.throttledCount;
+      document.getElementById('metricLatency').innerText = `${data.metrics.avgLatency} ms`;
+
+      if (data.recentLogs.length > 0) {
+        document.getElementById('logsContainer').innerHTML = data.recentLogs.map(l => `
+          <div class="flex justify-between items-center p-2.5 rounded bg-slate-950 border border-slate-800">
+            <span class="${l.statusCode === 429 ? 'text-rose-400 font-bold' : 'text-emerald-400'}">
+              [${l.statusCode}] ${l.method} ${l.endpoint}
+            </span>
+            <span class="text-slate-400">${l.latencyMs}ms</span>
+          </div>
+        `).join('');
+      }
+
+      if (data.recentDeliveries.length > 0) {
+        document.getElementById('deliveriesContainer').innerHTML = data.recentDeliveries.map(d => `
+          <div class="flex justify-between items-center p-2.5 rounded bg-slate-950 border border-slate-800">
+            <span>${d.eventType} <span class="text-slate-400">(Attempt #${d.attemptCount})</span></span>
+            <span class="${d.status === 'SUCCESS' ? 'text-emerald-400' : d.status === 'PENDING' ? 'text-amber-400' : 'text-rose-400'} font-bold">
+              ${d.status}
+            </span>
+          </div>
+        `).join('');
+      }
+    }
+
+    setInterval(refreshAnalytics, 2000);
+  </script>
+</body>
+</html>

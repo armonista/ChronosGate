@@ -1,0 +1,64 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String            @id @default(uuid())
+  email        String            @unique
+  passwordHash String
+  createdAt    DateTime          @default(now())
+  apiKeys      ApiKey[]
+  webhooks     WebhookEndpoint[]
+}
+
+model ApiKey {
+  id          String       @id @default(uuid())
+  key         String       @unique
+  name        String
+  rateLimit   Int          @default(60)
+  isActive    Boolean      @default(true)
+  userId      String
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime     @default(now())
+  requestLogs RequestLog[]
+}
+
+model RequestLog {
+  id         String   @id @default(uuid())
+  apiKeyId   String
+  apiKey     ApiKey   @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+  endpoint   String
+  method     String
+  statusCode Int
+  latencyMs  Int
+  timestamp  DateTime @default(now())
+}
+
+model WebhookEndpoint {
+  id         String            @id @default(uuid())
+  url        String
+  secret     String
+  eventTypes String[]
+  userId     String
+  user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt  DateTime          @default(now())
+  deliveries WebhookDelivery[]
+}
+
+model WebhookDelivery {
+  id           String          @id @default(uuid())
+  webhookId    String
+  webhook      WebhookEndpoint @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+  eventType    String
+  payload      Json
+  status       String
+  attemptCount Int             @default(0)
+  responseCode Int?
+  nextRetryAt  DateTime?
+  createdAt    DateTime        @default(now())
+}
