@@ -6,6 +6,9 @@ const { authenticateJWT, authenticateApiKey, prisma } = require('../middleware/a
 const { slidingWindowRateLimiter } = require('../middleware/rateLimiter');
 const { attemptDelivery } = require('../services/webhookWorker');
 
+// 1. IMPORT ZOD VALIDATION MIDDLEWARE & SCHEMAS HERE
+const { validate, registerSchema, createKeySchema, triggerEventSchema } = require('../middleware/validate');
+
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'chronos_gate_super_secret_jwt_key_2026';
 
@@ -15,11 +18,10 @@ router.get('/health', (req, res) => {
 });
 
 // 1. Auth Endpoints
-router.post('/auth/register', async (req, res) => {
+// 2. ADD validate(registerSchema) HERE
+router.post('/auth/register', validate(registerSchema), async (req, res) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
-
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing) return res.status(400).json({ error: 'Email already registered' });
 
@@ -49,7 +51,8 @@ router.post('/auth/login', async (req, res) => {
 });
 
 // 2. API Key & Webhook Endpoints
-router.post('/keys', authenticateJWT, async (req, res) => {
+// 3. ADD validate(createKeySchema) HERE
+router.post('/keys', authenticateJWT, validate(createKeySchema), async (req, res) => {
   try {
     const { name, rateLimit } = req.body;
     const rawKey = `cg_live_${crypto.randomBytes(16).toString('hex')}`;
@@ -104,12 +107,10 @@ router.get('/webhooks', authenticateJWT, async (req, res) => {
 });
 
 // 3. Rate-Limited Event Ingestion & Webhook Dispatcher
-router.post('/v1/events/trigger', authenticateApiKey, slidingWindowRateLimiter, async (req, res) => {
+// 4. ADD validate(triggerEventSchema) HERE
+router.post('/v1/events/trigger', authenticateApiKey, slidingWindowRateLimiter, validate(triggerEventSchema), async (req, res) => {
   try {
     const { eventType, payload } = req.body;
-    if (!eventType || !payload) {
-      return res.status(400).json({ error: 'eventType and payload are required' });
-    }
 
     const endpoints = await prisma.webhookEndpoint.findMany({
       where: {
@@ -143,7 +144,7 @@ router.post('/v1/events/trigger', authenticateApiKey, slidingWindowRateLimiter, 
   }
 });
 
-// Simulated Downstream Receiver (25% failure rate to test exponential backoff retries)
+// Simulated Downstream Receiver
 router.post('/mock-receiver', (req, res) => {
   const shouldFail = Math.random() < 0.25;
   if (shouldFail) {
