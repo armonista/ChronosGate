@@ -40,3 +40,10 @@ ChronosGate is a high-throughput API Gateway and asynchronous webhook delivery e
    npm run dev
    ```
    Open `http://localhost:3000` in your browser.
+
+
+   ## Branching Practice
+
+This change was made in the feature-test branch.
+
+Learning GitHub branches and pull requests.
